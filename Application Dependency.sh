@@ -31,8 +31,10 @@ HEADER
 declare -A CONFIG
 CONFIG=(
 	[policytrigger]='' ## Policy to run after condition above has been met. EG: openChromeWebpages
-	[timeout]='5' ## Timeout in seconds. EG: 1800
+	[timeout]='300' ## Timeout in seconds. EG: 1800
 	[waitforuser]='' ## 'true' if you want to wait for the user to login before running. EG: true
+	[multiple]='' ## 'true' if you want multiple dependencies defined through a plist. 
+	[appdependency]='' ## Full path to application to wait for before proceeding. EG: /Applications/Google Chrome.app/
 	[domain]='tech.rocketman.appdependency' ## Plist that the preferences will be stored. 
 )
 
@@ -216,53 +218,70 @@ if [[ "${CONFIG[waitforuser]}" == "true" ]];then
   waitForUser
   echo "User is logged in. Checking if Core Applications are installed."
 fi
-				
-# Check if either file exists
-if [[ ! -f "$LOCALPLIST" ]] && [[ ! -f "$PROFILE" ]]; then
-    echo "Error: Neither $LOCALPLIST nor $PROFILE exist. These files are required for this script. Exiting..."
-    exit 1
+
+
+if [[ "${CONFIG[multiple]}" == "true" ]];then
+	# Check if either file exists
+	if [[ ! -f "$LOCALPLIST" ]] && [[ ! -f "$PROFILE" ]]; then
+		echo "Error: Neither $LOCALPLIST nor $PROFILE exist. These files are required for this script. Exiting..."
+		exit 1
+	fi
+	
+	count=$(( $(/usr/libexec/PlistBuddy -c "Print :Application" "$PROFILE" | wc -l | xargs) - 2 ))
+	
+	# Initialize an empty array to hold the application paths
+	applications=()
+	
+	# Loop through each index in the array
+	for ((i=0; i<count; i++)); do
+		# Get the value at the current index and add it to the applications array
+		app=$(/usr/libexec/PlistBuddy -c "Print :Application:$i" "$PROFILE")
+		applications+=("$app")
+	done
+									
+	# Start the timer
+	startTime=$(date +%s)
+	
+	# Loop until all applications are found or timeout is reached
+	while true; do
+		allInstalled=true
+		for app in "${applications[@]}"; do
+			if [[ ! -d "$app" ]]; then
+				allInstalled=false
+				echo "Waiting for $app to be installed"
+					timeRemaining=$(countdown "${startTime}" "${CONFIG[timeout]}")
+					echo $timeRemaining
+					if [[ $timeRemaining -le 0 ]];then
+							echo "TIMEOUT: Core Applications did not install in ${CONFIG[timeout]} seconds. Exiting..."
+							exit 1
+					fi
+				break
+			fi
+		done
+	
+		if $allInstalled; then
+			break
+		fi
+	
+		sleep 1
+	done
+	
+	echo "Core Applications are installed: ${applications[@]}"
+else
+	if [[ ${CONFIG[appdependency]} ]];then
+	startTime=$(date +%s)
+	while [[ ! -d "${CONFIG[appdependency]}" ]];do
+		timeRemaining=$(countdown "${startTime}" "${CONFIG[timeout]}")
+		echo $timeRemaining
+		if [[ $timeRemaining -le 0 ]];then
+		echo "TIMEOUT: ${CONFIG[appdependency]} did not install in ${CONFIG[timeout]} seconds. Exiting..."
+		exit 1
+		fi
+		sleep 1
+	done
+	echo "${CONFIG[appdependency]} is installed."
+	fi
 fi
-
-count=$(( $(/usr/libexec/PlistBuddy -c "Print :Application" "$PROFILE" | wc -l | xargs) - 2 ))
-
-# Initialize an empty array to hold the application paths
-applications=()
-
-# Loop through each index in the array
-for ((i=0; i<count; i++)); do
-   # Get the value at the current index and add it to the applications array
-   app=$(/usr/libexec/PlistBuddy -c "Print :Application:$i" "$PROFILE")
-   applications+=("$app")
-done
-								
-# Start the timer
-startTime=$(date +%s)
-
-# Loop until all applications are found or timeout is reached
-while true; do
-   allInstalled=true
-   for app in "${applications[@]}"; do
-       if [[ ! -d "$app" ]]; then
-           allInstalled=false
-           echo "Waiting for $app to be installed"
-				timeRemaining=$(countdown "${startTime}" "${CONFIG[timeout]}")
-				echo $timeRemaining
-				if [[ $timeRemaining -le 0 ]];then
-						echo "TIMEOUT: Core Applications did not install in ${CONFIG[timeout]} seconds. Exiting..."
-						exit 1
-				fi
-           break
-       fi
-   done
-
-   if $allInstalled; then
-       break
-   fi
-
-   sleep 1
-done
-
-echo "Core Applications are installed: ${applications[@]}"
 
 
 if [ ${CONFIG[policytrigger]} ];then
